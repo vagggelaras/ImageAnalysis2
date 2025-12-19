@@ -34,11 +34,11 @@
 
 Πρέπει να εγκαταστήσεις τα παρακάτω στον υπολογιστή σου:
 
-### 1. **Python 3.8+**
+### 1. **Python 3.11+** (3.13 supported)
 
 #### Windows:
 1. Πήγαινε στο [python.org/downloads](https://www.python.org/downloads/)
-2. Κατέβασε το τελευταίο Python 3.x (π.χ. 3.11 ή 3.12)
+2. Κατέβασε Python 3.11, 3.12 ή 3.13
 3. **ΣΗΜΑΝΤΙΚΟ**: Κατά την εγκατάσταση, τσέκαρε το "Add Python to PATH"
 4. Εγκατάσταση
 5. Έλεγχος:
@@ -243,6 +243,14 @@ AnalyshEikonas/
 **Error: "No module named 'fastapi'"**
 - Λύση: `pip install -r requirements.txt`
 
+**Error: pip install αποτυγχάνει με compilation errors**
+- Λύση 1 (Συνιστάται): Upgrade pip και εγκατάσταση νεότερων εκδόσεων
+  ```bash
+  python -m pip install --upgrade pip
+  pip install -r requirements.txt
+  ```
+- Λύση 2: Αν έχεις Python 3.13, βεβαιώσου ότι έχεις τις νεότερες εκδόσεις των packages (το requirements.txt έχει ενημερωθεί)
+
 **Error: "Address already in use" (port 8000)**
 - Λύση: Κλείσε άλλες εφαρμογές που χρησιμοποιούν το port 8000, ή άλλαξε το port στο `main.py`
 
@@ -279,12 +287,13 @@ AnalyshEikonas/
 ## 📝 Dependencies
 
 ### Backend (Python)
-- fastapi >= 0.104.0
+- Python 3.11+ (3.13 supported)
+- fastapi >= 0.115.0
 - uvicorn >= 0.24.0
-- opencv-python >= 4.8.0
-- numpy >= 1.26.0
+- opencv-python >= 4.10.0
+- numpy >= 2.1.0
 - pillow >= 10.0.0
-- scikit-image >= 0.21.0
+- scikit-image >= 0.24.0
 
 ### Frontend (JavaScript)
 - react ^18.3.1
