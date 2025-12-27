@@ -1,0 +1,614 @@
+AnalyshEikonas - Τεχνική Τεκμηρίωση Έργου
+========================================
+
+Σύστημα: Image puzzle analysis με feature extraction και reconstruction
+Η εφαρμογή κόβει μια εικόνα, την ανακατεύει, την αναλύει με texture features και επιχειρεί ανακατασκευή.
+
+5 ΦΑΣΕΙΣ:
+
+ΦΑΣΗ 1: Puzzle Generator (Frontend)
+====================================
+Original image > Cut into pieces > Shuffle and Rotate
+
+INPUT: Εικόνα + size του grid
+1. Resize εικόνας στα 200×200 px (ή 300×300)
+2. Κοπή σε κομμάτια
+   pieces = [piece0, piece1, ..., piece8]
+3. Δημιουργία ground truth:
+   ground_truth: { piece_id: {sourceIndex: 0, destPosition: 0, rotation: 0} }
+4. Shuffle τα tiles και ανάμιξη
+   [0,1,2,3,4,5,6,7,8] > [5,2,8,0,4,1,7,3,6]
+5. Τυχαία rotation σε κάθε piece για evaluation
+
+OUTPUT:
+1. Pieces[]: array με τα shuffle & rotated pieces
+2. Ground_truth: τα σωστά indices και rotations για evaluation
+3. Grid_size
+
+Περιγραφή: Εφαρμογή 3 blocks στο frontend.
+
+Block 1 - Upload Image:
+- Επιλογή είτε να ανεβάσεις δική σου εικόνα, ή default φορτώνεται το squares4.jpg
+- Το squares4.jpg είναι 2×2 grid με 4 χρώματα: κόκκινο, άσπρο, πράσινο, μπλε
+- Χρησιμοποιείται για testing - ιδανικό γιατί τα χρώματα θα διαχωρίσουν τα κομμάτια στα features
+
+Block 2 - Shuffle and Rotate:
+- Κοπή σε grid με shuffle και rotation κάθε κομματιού ξεχωριστά
+- Default grid size είναι 2×2 (ή 3×3) για testing
+- Μπορεί να επιλέξει ο χρήστης να 3×3, 4×4, κλπ
+
+Block 3 - Border Strips Extractor:
+- Ο χρήστης ορίζει το border width (default 5 pixels)
+- Ο χρήστης ορίζει τα histogram bins (16, 32, 64, 128, ή 256)
+  * Λιγότερα bins = πιο γρήγορος υπολογισμός, αλλά λιγότερη λεπτομέρεια
+  * Περισσότερα bins = πιο αργός υπολογισμός αλλά περισσότερη πληροφορία
+  * Default: 16 bins
+- Μετά πατάμε "Extract Border Strips", βγαίνει preview των borders
+- Μετά πατάμε "Send to Backend", στέλνονται τα δεδομένα στο Python FastAPI backend
+
+BACKEND λειτουργία:
+- Δημιουργείται φάκελος "tempPhotos" στο root directory
+- Διαγράφονται όλα τα παλιά περιεχόμενα του φακέλου
+- Αποθηκεύονται όλοι οι border strips:
+  * tile_0_src0_dest0_rot0_top.jpg
+  * tile_0_src0_dest0_rot0_right.jpg
+  * tile_0_src0_dest0_rot0_bottom.jpg
+  * tile_0_src0_dest0_rot0_left.jpg
+  * (επαναλαμβάνεται για κάθε tile)
+- Υπολογίζονται features για κάθε tile και κάθε border
+- Επιστρέφονται JSON results στο frontend
+
+ΦΑΣΗ 2: Feature Extraction
+===========================
+Κάθε tile έχεις TOP, LEFT, RIGHT, BOTTOM border strips.
+Εξάγονται 2 τύποι features:
+
+i) Tile-level:
+   - Ολόκληρο το tile
+   - Χρησιμοποιείται για global similarity
+
+ii) Border-level:
+   - TOP, RIGHT, BOTTOM, LEFT strips
+   - Χρησιμοποιείται για adjacency matching
+
+ΤΥΠΟΙ FEATURES:
+
+1. COLOR HISTOGRAMS (RGB)
+--------------------------
+- Χρησιμοποιούμε RGB color space (όχι HSV όπως είχαμε σε παλιό documentation)
+- Configurable bins: 16, 32, 64, 128, ή 256
+- Υπολογίζουμε normalized histogram για κάθε κανάλι (R, G, B)
+- Εξάγεται από:
+  * Ολόκληρο το tile (tile-level)
+  * Κάθε border strip (top, right, bottom, left)
+
+Σημαντικό προειδοποίηση:
+- OpenCV διαβάζει εικόνες σε BGR format
+- Το backend διαχειρίζεται BGR format εσωτερικά
+- Τα histograms επιστρέφονται σε RGB σειρά για ευκολία
+- Normalization: άθροισμα = 1 για κάθε κανάλι
+
+2. GABOR TEXTURE FEATURES
+--------------------------
+- Εφαρμόζουμε Gabor filters για texture και edge detection
+- 4 orientations: 0°, 45°, 90°, 135°
+- 3 wavelengths (frequencies): 5, 10, 15 pixels
+- Σύνολο: 12 filters ανά region
+
+Παράμετροι Gabor kernel:
+- Kernel size: 31×31 pixels
+- Sigma (σ): 4.0
+- Gamma: 0.5 (spatial aspect ratio)
+- Psi: 0 (phase offset)
+
+Extracted features ανά filter:
+- Mean: μέση τιμή του filtered image
+- Std: standard deviation
+- Energy: άθροισμα τετραγώνων (texture strength)
+
+Εξάγεται από:
+- Ολόκληρο το tile (12 filters)
+- Κάθε border strip (12 filters × 4 borders = 48 filters)
+
+Αποθήκευση:
+- Τα Gabor filtered images αποθηκεύονται στο tempPhotos/gabor_filters/
+- Χρήσιμα για debugging και visualization
+
+3. DEEP CNN FEATURES (MobileNetV2)
+----------------------------------
+- Χρησιμοποιούμε MobileNetV2 pre-trained στο ImageNet
+- Lightweight architecture, κατάλληλο για real-time applications
+- Εξάγουμε features από 5 intermediate layers:
+
+Layer 1: block_1_expand_relu
+  - Early features (56×56 spatial resolution)
+  - Ανιχνεύει basic edges, colors, simple patterns
+
+Layer 2: block_3_expand_relu
+  - Low-level textures (28×28)
+  - Simple texture patterns
+
+Layer 3: block_6_expand_relu
+  - Mid-level patterns (14×14)
+  - Complex textures, shapes
+
+Layer 4: block_13_expand_relu
+  - High-level structures (7×7)
+  - Object parts, complex patterns
+
+Layer 5: out_relu
+  - Final deep features (7×7)
+  - Abstract semantic features
+
+Feature Vector Extraction:
+- Global Average Pooling (GAP) across spatial dimensions
+- Αποτέλεσμα: compact feature vector (dimensions = number of channels)
+- Layer 1: 96 channels > 96-dimensional vector
+- Layer 5: 1280 channels > 1280-dimensional vector
+
+Preprocessing:
+- Resize κάθε του εικόνας σε 224×224 pixels (MobileNetV2 input size)
+- BGR > RGB conversion για TensorFlow
+- MobileNetV2-specific preprocessing (normalization στο [-1, 1])
+
+Εξάγεται από:
+- Ολόκληρο το tile (5 layers × feature vectors)
+- Κάθε border strip (5 layers × 4 borders)
+
+ΦΑΣΗ 3: Adjacency Matrix
+=========================
+Στόχος: Για κάθε δύο κομμάτια υπολογίζουμε πόσο πιθανό είναι να ταιριάζουν.
+
+Concept: Κάθε κομμάτι μπορεί να ταιριάξει με κάθε άλλο κομμάτι σε οποιαδήποτε rotation.
+
+Υλοποίηση:
+Για κάθε ζεύγος pieces (A, B) υπολογίζουμε 16 scores:
+
+         | B.TOP  | B.RIGHT | B.BOTTOM | B.LEFT
+---------+--------+---------+----------+--------
+A.TOP    | 0.2    | 0.1     | 0.3      | 0.15
+A.RIGHT  | 0.85** | 0.1     | 0.2      | 0.3
+A.BOTTOM | 0.1    | 0.25    | 0.1      | 0.2
+A.LEFT   | 0.15   | 0.1     | 0.2      | 0.1
+
+** A.right vs B.top = 0.85 σημαίνει ότι αν το Β περιστραφεί 90° αντίθετα στιγμών μπορεί να ταιριάξει με το Α.
+
+Best Match Table:
+Border   | Ταιριάζει με Β | Rotation needed | Score
+---------+----------------+-----------------+-------
+A.right  | LEFT           | 0               | 0.3
+A.right  | TOP            | 90              | 0.85
+A.right  | RIGHT          | 180             | 0.1
+A.right  | BOTTOM         | 270             | 0.2
+
+Άρα το A.right ταιριάζει με το B.top με rotation -90°.
+
+OUTPUT: N×N×16 matrix με score για κάθε δυνατό matching
+
+Επεξήγηση:
+----------
+Δεδομένου ότι shuffled pieces είναι στα τυχαία rotations, το similarity metric
+θα υπολογίσει τα variance μεταξύ 2 γειτονικών borders ή έναν compatibility score.
+
+INPUT: Feature vectors από κάθε border
+OUTPUT: Compatibility matrix με scores για κάθε δυνατό matching
+
+Distance Metrics:
+-----------------
+
+1. Chi-Square Distance (Color Histograms):
+   - Χρησιμοποιείται για color histogram comparison
+   - Τύπος: χ² = Σ[(h1[i] - h2[i])² / (h1[i] + h2[i] + ε)]
+   - Lower is better (0 = identical)
+   - Typical range: 0-2 για normalized histograms
+   - Normalization: distance → similarity (1 - distance/max_distance)
+
+2. Euclidean Distance (Gabor Features):
+   - Χρησιμοποιείται για Gabor texture features
+   - L2 distance μεταξύ feature vectors
+   - Lower is better (0 = identical)
+   - Normalization: distance → similarity (1 - distance/max_distance)
+
+3. Cosine Similarity (CNN Features):
+   - Χρησιμοποιείται για deep CNN features
+   - Μετράει το cosine της γωνίας μεταξύ vectors
+   - Τύπος: cos(θ) = (v1 · v2) / (||v1|| * ||v2||)
+   - Range: 0-1 (higher is better, 1 = identical direction)
+   - Ήδη similarity metric (δεν χρειάζεται normalization)
+
+Border Matching Logic:
+----------------------
+Για να ταιριάξουν 2 tiles, ένα border του tileA πρέπει να ταιριάξει με το
+αντίστοιχο border του tileB ανάλογα με το rotation:
+
+Rotation 0°:   opposite borders (top↔bottom, right↔left)
+Rotation 90°:  borders rotate clockwise (top→right, right→bottom, etc.)
+Rotation 180°: same borders (top↔top, right↔right)
+Rotation 270°: borders rotate counter-clockwise
+
+Weighted Combination:
+--------------------
+Κάθε border comparison παράγει 3 scores:
+- Color score (από Chi-Square distance)
+- Gabor score (από Euclidean distance)
+- CNN score (από Cosine similarity)
+
+Combined Score = w_color * color_score + w_gabor * gabor_score + w_cnn * cnn_score
+
+Default weights: {color: 0.4, gabor: 0.3, cnn: 0.3}
+
+Configurable Parameters:
+- Weights για κάθε metric
+- CNN layer για comparison (default: block_6_expand_relu)
+- TopK: πόσα top matches να κρατήσουμε ανά border (default: 10)
+
+Output Format:
+-------------
+Για κάθε tile-border pair, επιστρέφονται τα TopK matches sorted by score:
+{
+  "tileA": int,
+  "borderA": str,
+  "tileB": int,
+  "borderB": str,
+  "rotation": int (0, 90, 180, 270),
+  "compatibilityScore": float (0-1, higher = better),
+  "scores": {
+    "color": float,
+    "gabor": float,
+    "cnn": float
+  }
+}
+
+Statistics:
+- Total comparisons (όλα τα δυνατά matches)
+- Filtered matches (TopK ανά border)
+- Average, Min, Max, Std compatibility scores
+- Best overall match
+
+
+ΦΑΣΗ 4: Puzzle Reconstruction (Greedy Solver)
+==============================================
+
+Στόχος: Αυτόματη ανακατασκευή του puzzle χρησιμοποιώντας τα compatibility scores.
+
+Greedy Algorithm:
+-----------------
+1. Ξεκινάει με Tile 0 στην θέση (0,0)
+2. Για κάθε κενή θέση στο grid:
+   a. Ελέγχει τους γείτονες (πάνω, κάτω, αριστερά, δεξιά)
+   b. Για κάθε unused tile, υπολογίζει average compatibility με γείτονες
+   c. Επιλέγει το tile με το υψηλότερο avg compatibility score
+   d. Τοποθετεί το tile με το rotation που προτείνεται
+3. Επαναλαμβάνει μέχρι να μην μπορεί να βρει άλλα καλά matches (threshold: 0.3)
+
+Placement Logic:
+---------------
+Για κάθε υποψήφιο tile στην θέση (row, col):
+- Top neighbor (row-1, col) → compare με top border
+- Left neighbor (row, col-1) → compare με left border
+- Right neighbor (row, col+1) → compare με right border
+- Bottom neighbor (row+1, col) → compare με bottom border
+
+Avg score = (sum of border compatibilities) / (number of neighbors)
+
+Accuracy Metrics:
+----------------
+- Position Accuracy: Ποσοστό tiles στη σωστή θέση
+- Rotation Accuracy: Ποσοστό tiles με σωστό rotation
+
+Ground Truth Comparison:
+-----------------------
+Συγκρίνει το reconstructed grid με το original grid για evaluation:
+- Κάθε θέση (row, col) έχει source index (original position)
+- Εάν predicted source index == correct source index → correct position
+- Εάν predicted rotation == 0° (original) → correct rotation
+
+Limitations:
+-----------
+- Greedy algorithm κάνει local decisions (όχι global optimization)
+- Δεν backtrack αν κάνει λάθος επιλογή
+- Threshold-based placement (μπορεί να μείνουν tiles unplaced)
+- Για καλύτερα αποτελέσματα χρειάζεται:
+  * Genetic Algorithm
+  * Simulated Annealing
+  * Dynamic Programming
+  * Graph-based optimization
+
+
+FRONTEND COMPONENTS
+===================
+
+1. UploadImage.jsx
+   - File upload ή χρήση default εικόνας (squares4.jpg)
+   - Preview της εικόνας
+
+2. ShuffleAndRotateImage.jsx
+   - Grid size selection (2×2, 3×3, 4×4, κλπ)
+   - Shuffle και rotation των tiles
+   - Δημιουργία shuffleData για App context
+
+3. BorderStripsExtractor.jsx
+   - Border width input (1-50 pixels, default: 5)
+   - Bins selection (16, 32, 64, 128, 256, default: 16)
+   - Extract border strips preview
+   - Send to Backend button
+   - Δημιουργία histogramData για App context
+
+4. ColorHistogram.jsx
+   - Εμφάνιση color histograms (R, G, B)
+   - Tile-level και Border-level views
+   - Table format με normalized values
+   - Επιλογή tile για εξέταση
+
+5. GaborFeatures.jsx
+   - Εμφάνιση Gabor texture features
+   - 12 filters ανά region (4 orientations × 3 wavelengths)
+   - Tile-level και Border-level views
+   - Statistics: orientation, wavelength, mean, std, energy
+
+6. CnnFeatures.jsx
+   - Εμφάνιση Deep CNN features από MobileNetV2
+   - 5 intermediate layers
+   - Tile-level και Border-level views
+   - Layer information: shape, channels, mean, std, min, max
+   - Feature vector preview (first 20 values)
+   - Full features στο console
+
+7. AdjacencyMatrixViewer.jsx
+   - Configuration panel:
+     * Feature weights (color, gabor, cnn)
+     * CNN layer selection
+     * TopK selection
+   - View modes:
+     * Statistics: Overall metrics και best match
+     * Best Matches: Top matches ανά tile-border
+     * Heatmap: Visual representation of compatibility
+     * Reconstruction: Greedy solver με accuracy metrics
+   - Interactive visualization
+
+
+BACKEND (FastAPI)
+=================
+
+Endpoint: POST /api/calculate-histograms
+----------------------------------------
+
+Input Parameters:
+- image: UploadFile (το uploaded image)
+- gridSize: int (π.χ. 2 για 2×2)
+- borderWidth: int (pixels)
+- bins: int (16, 32, 64, 128, ή 256)
+- tiles: JSON string με [{sourceIndex, destPosition, rotation}, ...]
+
+Λειτουργία:
+1. Διάβασμα εικόνας με OpenCV (BGR format)
+2. Για κάθε tile:
+   a. Εξαγωγή tile από source position
+   b. Περιστροφή tile με cv2.rotate()
+   c. Εξαγωγή 4 border strips
+   d. Υπολογισμός features:
+      - Color Histogram (RGB, configurable bins)
+      - Gabor Filters (12 filters)
+      - CNN Features (MobileNetV2, 5 layers)
+   e. Αποθήκευση border strip images στο tempPhotos/
+   f. Αποθήκευση Gabor filtered images στο tempPhotos/gabor_filters/
+
+Output JSON:
+{
+  "status": "success",
+  "gridSize": 2,
+  "borderWidth": 5,
+  "bins": 16,
+  "totalTiles": 4,
+  "totalImages": 16,
+  "results": [
+    {
+      "sourceIndex": 0,
+      "destPosition": 0,
+      "rotation": 0,
+      "tileHistogram": {"r": [...], "g": [...], "b": [...]},
+      "borderHistograms": {
+        "top": {"r": [...], "g": [...], "b": [...]},
+        "right": {...},
+        "bottom": {...},
+        "left": {...}
+      },
+      "tileGaborFeatures": [
+        {"orientation": 0, "wavelength": 5, "mean": 0.123, "std": 0.456, "energy": 789.0},
+        ...12 filters total
+      ],
+      "borderGaborFeatures": {
+        "top": [...12 filters...],
+        "right": [...12 filters...],
+        "bottom": [...12 filters...],
+        "left": [...12 filters...]
+      },
+      "tileCnnFeatures": [
+        {
+          "layer_name": "block_1_expand_relu",
+          "layer_index": 0,
+          "shape": [56, 56, 96],
+          "num_channels": 96,
+          "mean": 0.123,
+          "std": 0.456,
+          "min": 0.0,
+          "max": 1.234,
+          "feature_vector": [...96 values...]
+        },
+        ...5 layers total
+      ],
+      "borderCnnFeatures": {
+        "top": [...5 layers...],
+        "right": [...5 layers...],
+        "bottom": [...5 layers...],
+        "left": [...5 layers...]
+      }
+    },
+    ...για κάθε tile
+  ]
+}
+
+
+Endpoint: POST /api/calculate-adjacency-matrix
+----------------------------------------------
+
+Input JSON:
+{
+  "histogramData": dict (full response από /api/calculate-histograms),
+  "weights": dict (optional, default: {"color": 0.4, "gabor": 0.3, "cnn": 0.3}),
+  "cnnLayer": str (optional, default: "block_6_expand_relu"),
+  "topK": int (optional, default: 10)
+}
+
+Λειτουργία:
+1. Για κάθε ζεύγος tiles (A, B):
+   a. Για κάθε border του A (top, right, bottom, left)
+   b. Για κάθε rotation (0°, 90°, 180°, 270°)
+   c. Υπολογισμός opposite border του B
+   d. Υπολογισμός compatibility με 3 metrics
+   e. Weighted combination of scores
+2. Sort όλα τα matches by compatibility score
+3. Filter: κράτα TopK matches ανά tile-border pair
+4. Υπολογισμός statistics
+
+Output JSON:
+{
+  "status": "success",
+  "gridSize": int,
+  "totalTiles": int,
+  "weights": {"color": float, "gabor": float, "cnn": float},
+  "cnnLayer": str,
+  "topK": int,
+  "adjacencyMatrix": [
+    {
+      "tileA": int,
+      "borderA": str,
+      "tileB": int,
+      "borderB": str,
+      "rotation": int,
+      "compatibilityScore": float,
+      "scores": {"color": float, "gabor": float, "cnn": float}
+    },
+    ...
+  ],
+  "statistics": {
+    "totalComparisons": int,
+    "filteredMatches": int,
+    "averageCompatibility": float,
+    "minCompatibility": float,
+    "maxCompatibility": float,
+    "stdCompatibility": float,
+    "bestMatch": {...}
+  }
+}
+
+
+TESTING και VALIDATION
+======================
+
+Default Test Image: squares4.jpg
+- 2×2 grid με 4 ξεχωριστά χρώματα:
+  * Πάνω αριστερά: Κόκκινο (RGB: 255, 0, 0)
+  * Πάνω δεξιά: Άσπρο (RGB: 255, 255, 255)
+  * Κάτω αριστερά: Πράσινο (RGB: 0, 255, 0)
+  * Κάτω δεξιά: Μπλε (RGB: 0, 0, 255)
+
+- Κάθε τετράγωνο έχει μαύρο περίγραμμα (black border)
+- Ιδανικό για testing γιατί:
+  * Ξεκάθαρα χρώματα → διακριτά color histograms
+  * Μαύρα περιθώρια → ξεκάθαρα edges
+  * Μικρό grid (2×2) → γρήγορος υπολογισμός
+
+Expected Results για κόκκινο tile:
+- Red channel: peaks στο bin που αντιστοιχεί στο 255
+- Green channel: ~0 σχεδόν (εκτός από το μαύρο border)
+- Blue channel: ~0 σχεδόν (εκτός από το μαύρο border)
+
+Validation για κάθε φάση:
+✓ Color histograms διαφοροποιούνται (red tile > red channel peak)
+✓ Gabor features διαφοροποιούνται (green tile vs black border)
+✓ CNN features διαφοροποιούνται (green tile)
+✓ Adjacency matrix παράγει καλά matches
+✓ Reconstruction algorithm λειτουργεί (accuracy > 0%)
+
+
+Επεκτάσεις και Βελτιώσεις
+=========================
+
+Υλοποιημένα:
+1. ✓ Color Histogram features (RGB, configurable bins)
+2. ✓ Gabor Texture features (12 filters)
+3. ✓ Deep CNN features (MobileNetV2, 5 layers)
+4. ✓ Adjacency Matrix με distance metrics
+5. ✓ Border matching logic με rotations
+6. ✓ Greedy Puzzle Solver
+7. ✓ Heatmap visualization
+8. ✓ Accuracy metrics (position & rotation)
+
+Προτεινόμενες βελτιώσεις:
+1. Καλύτερος solver algorithm:
+   - Genetic Algorithm
+   - Simulated Annealing
+   - Graph-based optimization (Maximum Weight Matching)
+2. CNN feature caching για ταχύτερη επεξεργασία
+3. Weighted combination optimization (learn best weights)
+4. Corner detection με edge analysis
+5. Support για larger grids (5×5, 6×6, κλπ)
+6. Multi-image batch processing
+7. Export/Import of feature vectors
+8. Real-time reconstruction visualization
+9. Interactive manual adjustments
+10. Performance profiling και optimization
+
+
+Οδηγίες για Εκτέλεση
+=========================
+
+Backend:
+1. cd backend
+2. pip install -r requirements.txt
+3. venv\Scripts\activate (Windows) ή source venv/bin/activate (Mac/Linux)
+4. uvicorn app:app --reload
+5. Το backend στο http://localhost:8000
+
+Frontend:
+1. cd frontend
+2. npm install
+3. npm run dev
+4. Το frontend στο http://localhost:5173
+
+Dependencies:
+- Backend: fastapi, uvicorn, opencv-python, numpy, pillow, tensorflow
+- Frontend: react, vite
+
+Σημειώσεις:
+- Το MobileNetV2 κατεβαίνει automatically την πρώτη φορά (~14MB)
+- Το tempPhotos/ δημιουργείται automatically και καθαρίζεται κάθε run
+- Όλα τα features επιστρέφονται σε JSON format για εύκολη επεξεργασία
+
+
+Ιστορικό Εκδόσεων
+==================
+
+Version 1:
+- Βασική υποδομή: upload, shuffle, border extraction
+- Αποθήκευση border strip images
+
+Version 2:
+- Προσθήκη Color Histograms (RGB με configurable bins)
+- Fix BGR/RGB bug (τώρα λειτουργεί σωστά)
+- Προσθήκη Gabor Texture Features (12 filters)
+- Προσθήκη Deep CNN Features (MobileNetV2, 5 layers)
+- Δημιουργία 3 visualization components
+- Default bins: 16 για ταχύτερη επεξεργασία
+
+Version 3 (τρέχουσα):
+- Προσθήκη Adjacency Matrix calculation
+- Distance metrics: Chi-Square, Euclidean, Cosine Similarity
+- Border matching logic με rotation handling
+- Greedy Puzzle Solver algorithm
+- Heatmap visualization
+- Reconstruction view με accuracy metrics
+- Interactive configuration (weights, CNN layer, TopK)
+- Statistics και best matches display
+- Ground truth comparison

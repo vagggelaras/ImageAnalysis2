@@ -20,13 +20,15 @@
 - **Backend (Python FastAPI)**: API server για επεξεργασία εικόνων και υπολογισμό features
 
 **Δυνατότητες:**
-- Αυτόματο resize εικόνων σε 200x200 pixels
-- Κοπή εικόνας σε grid (3x3, 4x4, κλπ)
+- Upload εικόνων με drag & drop
+- Κοπή εικόνας σε grid (2x2 έως 20x20)
 - Shuffle tiles με τυχαία περιστροφή (0°, 90°, 180°, 270°)
-- Color histogram analysis (RGB channels)
-- Texture features (GLCM, LBP, Edges, Statistical)
-- Border analysis για matching γειτονικών tiles
-- Distance/Similarity calculation μεταξύ όλων των tiles
+- Εξαγωγή border strips από κάθε tile (configurable width)
+- **Color histogram analysis** (RGB channels - 256 bins)
+  - Histogram για ολόκληρο κάθε tile
+  - Histogram για κάθε border (top, right, bottom, left)
+- Interactive visualization των histograms
+- Real-time αναπαράσταση των αποτελεσμάτων
 
 ---
 

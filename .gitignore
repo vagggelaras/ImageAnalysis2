@@ -1,0 +1,9 @@
+# Temporary photos folder
+tempPhotos/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary Word files
+~$*.docx

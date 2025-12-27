@@ -1,80 +1,48 @@
-import './App.css'
-import { createContext, useState, useContext } from 'react'
-import InsertImage from "../components/InsertImage"
-import ShuffleImage from '../components/ShuffleImage'
-import BorderStrips from '../components/BorderStrips'
-import TileHistograms from '../components/TileHistograms'
-import BorderHistograms from '../components/BorderHistograms'
-import TextureFeatures from '../components/TextureFeatures'
-import BorderTextureFeatures from '../components/BorderTextureFeatures'
-import TileDistances from '../components/TileDistances'
-import GlobalVariables from '../components/GlobalVariables'
+import React, { useState, useEffect, createContext } from 'react'
+import UploadImage from '../components/UploadImage'
+import ShuffleAndRotateImage from '../components/ShuffleAndRotateImage'
+import BorderStripsEctractor from '../components/BorderStripsExtractor'
+import ColorHistogram from '../components/ColorHistogram'
+import GaborFeatures from '../components/GaborFeatures'
+import CnnFeatures from '../components/CnnFeatures'
+import AdjacencyMatrixViewer from '../components/AdjacencyMatrixViewer'
 
-const ImageContext = createContext()
+export const AppContext = createContext()
 
 export default function App() {
+  const [message, setMessage] = useState('')
+  const [file, setFile] = useState("/test2.jpg")
+  const [shuffleData, setShuffleData] = useState(null)
+  const [histogramData, setHistogramData] = useState(null)
 
-  const [image, setImage] = useState(null)
-  const [originalPositions, setOriginalPositions] = useState([]) // Αρχικές θέσεις tiles
-  const [currentPositions, setCurrentPositions] = useState([]) // Θέσεις μετά το shuffle
-  const [tiles, setTiles] = useState([]) // Τα tiles μετά το shuffle
+  useEffect(() => {
+    // GET request στο backend
+    fetch('/api/hello')
+      .then(res => res.json())
+      .then(data => setMessage(data.message));
+  }, [])
 
-  // Global settings για histograms
-  const [bins, setBins] = useState(256)
-  const [borderWidth, setBorderWidth] = useState(5)
-
-console.log(tiles)
-  // Helper function για να εμφανίζει τον πίνακα σε μορφή grid
-  const displayGrid = (positions, gridSize, showRotation = false) => {
-    if (positions.length === 0) return
-
-    const grid = Array(gridSize).fill(null).map(() => Array(gridSize).fill(null))
-
-    positions.forEach(pos => {
-      grid[pos.row][pos.col] = showRotation ? pos.rotation : pos.id
-    })
-
-    console.table(grid)
+  const sendData = async () => {
+    const response = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Vaggelis', age: 25 })
+    });
+    const data = await response.json();
+    console.log(data);
   }
 
-  // Εμφάνιση όταν αλλάζουν οι θέσεις
-  if (originalPositions.length > 0) {
-    const gridSize = Math.sqrt(originalPositions.length)
-    console.log('Original Positions (IDs):')
-    displayGrid(originalPositions, gridSize, false)
-    console.log('Current Positions - IDs (Shuffled):')
-    displayGrid(currentPositions, gridSize, false)
-    console.log('Current Positions - Rotations (Shuffled):')
-    displayGrid(currentPositions, gridSize, true)
-  }
+  const values = { message, setMessage, sendData, file, setFile, shuffleData, setShuffleData, histogramData, setHistogramData }
+
   return (
-    <ImageContext.Provider
-      value={{
-        image,
-        setImage,
-        originalPositions,
-        setOriginalPositions,
-        currentPositions,
-        setCurrentPositions,
-        tiles,
-        setTiles,
-        bins,
-        setBins,
-        borderWidth,
-        setBorderWidth
-      }}
-    >
-      <GlobalVariables/>
-      <InsertImage />
-      <ShuffleImage />
-      <BorderStrips />
-      <TileHistograms />
-      <BorderHistograms />
-      <TextureFeatures />
-      <BorderTextureFeatures />
-      <TileDistances />
-    </ImageContext.Provider>
+    <AppContext.Provider value={values}>
+      <UploadImage/>
+      <ShuffleAndRotateImage/>
+      <BorderStripsEctractor/>
+      <ColorHistogram/>
+      <GaborFeatures/>
+      <CnnFeatures/>
+      <AdjacencyMatrixViewer/>
+    </AppContext.Provider>
   )
 }
-
-export {ImageContext}
