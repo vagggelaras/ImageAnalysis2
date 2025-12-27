@@ -6,14 +6,16 @@ import ColorHistogram from '../components/ColorHistogram'
 import GaborFeatures from '../components/GaborFeatures'
 import CnnFeatures from '../components/CnnFeatures'
 import AdjacencyMatrixViewer from '../components/AdjacencyMatrixViewer'
+import ImageReconstruction from '../components/ImageReconstruction'
 
 export const AppContext = createContext()
 
 export default function App() {
   const [message, setMessage] = useState('')
-  const [file, setFile] = useState("/test2.jpg")
+  const [file, setFile] = useState("/test3.jpg")
   const [shuffleData, setShuffleData] = useState(null)
   const [histogramData, setHistogramData] = useState(null)
+  const [adjacencyData, setAdjacencyData] = useState(null)
 
   useEffect(() => {
     // GET request στο backend
@@ -32,7 +34,7 @@ export default function App() {
     console.log(data);
   }
 
-  const values = { message, setMessage, sendData, file, setFile, shuffleData, setShuffleData, histogramData, setHistogramData }
+  const values = { message, setMessage, sendData, file, setFile, shuffleData, setShuffleData, histogramData, setHistogramData, adjacencyData, setAdjacencyData }
 
   return (
     <AppContext.Provider value={values}>
@@ -43,6 +45,7 @@ export default function App() {
       <GaborFeatures/>
       <CnnFeatures/>
       <AdjacencyMatrixViewer/>
+      <ImageReconstruction/>
     </AppContext.Provider>
   )
 }

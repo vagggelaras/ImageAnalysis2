@@ -2,14 +2,14 @@ import { useContext, useState } from "react"
 import { AppContext } from "../src/App"
 
 export default function AdjacencyMatrixViewer() {
-    const { histogramData, shuffleData } = useContext(AppContext)
+    const { histogramData, shuffleData, setAdjacencyData: setContextAdjacencyData } = useContext(AppContext)
 
     // State
     const [adjacencyData, setAdjacencyData] = useState(null)
     const [loading, setLoading] = useState(false)
     const [weights, setWeights] = useState({ color: 0.4, gabor: 0.3, cnn: 0.3 })
     const [cnnLayer, setCnnLayer] = useState('block_6_expand_relu')
-    const [topK, setTopK] = useState(10)
+    const [topK, setTopK] = useState(20)
     const [selectedTile, setSelectedTile] = useState(0)
     const [viewMode, setViewMode] = useState('statistics') // 'statistics', 'matches', 'heatmap', 'reconstruction'
 
@@ -36,7 +36,8 @@ export default function AdjacencyMatrixViewer() {
             const data = await response.json()
 
             if (data.status === 'success') {
-                setAdjacencyData(data)
+                setAdjacencyData(data) // Local state for this component
+                setContextAdjacencyData(data) // Save to context for ImageReconstruction component
                 console.log('Adjacency Matrix calculated:', data)
                 alert(`Success! Calculated ${data.statistics.totalComparisons} comparisons, filtered to ${data.statistics.filteredMatches} top matches.`)
             } else {
