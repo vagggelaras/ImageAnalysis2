@@ -4,10 +4,15 @@ import { AppContext } from "../src/App"
 export default function ColorHistogram() {
     const { histogramData } = useContext(AppContext)
     const [selectedTileIndex, setSelectedTileIndex] = useState(0)
+    const [selectedRotation, setSelectedRotation] = useState(0)
     const [viewMode, setViewMode] = useState('tile') // 'tile' or 'borders'
 
     const handleTileChange = (e) => {
         setSelectedTileIndex(parseInt(e.target.value))
+    }
+
+    const handleRotationChange = (e) => {
+        setSelectedRotation(parseInt(e.target.value))
     }
 
     const formatArray = (arr) => {
@@ -27,7 +32,19 @@ export default function ColorHistogram() {
         )
     }
 
-    const currentTile = histogramData.results[selectedTileIndex]
+    const currentTileData = histogramData.results[selectedTileIndex]
+    const currentTile = currentTileData ? currentTileData.rotationFeatures[String(selectedRotation)] : null
+
+    if (!currentTile) {
+        return (
+            <div>
+                <h2>Color Histograms Data</h2>
+                <p style={{ color: 'orange' }}>
+                    Δεν υπάρχουν διαθέσιμα δεδομένα για το επιλεγμένο tile!
+                </p>
+            </div>
+        )
+    }
 
     return (
         <div style={{ padding: '20px', backgroundColor: '#f5f5f5', borderRadius: '8px', marginTop: '20px' }}>
@@ -56,21 +73,42 @@ export default function ColorHistogram() {
                         borderRadius: '5px',
                         border: '2px solid #4CAF50',
                         width: '100%',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        marginBottom: '10px'
                     }}
                 >
                     {histogramData.results.map((tile, index) => (
                         <option key={index} value={index}>
-                            Tile {index} - Source: {tile.sourceIndex} | Dest: {tile.destPosition} | Rotation: {tile.rotation}
+                            Tile {index} - Source: {tile.sourceIndex} | Dest: {tile.destPosition} | Shuffle Rotation: {tile.shuffleRotation}°
                         </option>
                     ))}
                 </select>
+
+                <h3 style={{ marginTop: '15px' }}>Επιλογή Rotation</h3>
+                <select
+                    value={selectedRotation}
+                    onChange={handleRotationChange}
+                    style={{
+                        padding: '10px',
+                        fontSize: '14px',
+                        borderRadius: '5px',
+                        border: '2px solid #FF9800',
+                        width: '100%',
+                        cursor: 'pointer'
+                    }}
+                >
+                    <option value={0}>0° (No Rotation)</option>
+                    <option value={90}>90° (Clockwise)</option>
+                    <option value={180}>180° (Upside Down)</option>
+                    <option value={270}>270° (Counter-Clockwise)</option>
+                </select>
+
                 <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '5px' }}>
                     <p style={{ margin: 0 }}>
-                        <strong>Τρέχον Tile:</strong> {selectedTileIndex} |
-                        <strong> Source:</strong> {currentTile.sourceIndex} |
-                        <strong> Dest:</strong> {currentTile.destPosition} |
-                        <strong> Rotation:</strong> {currentTile.rotation}
+                        <strong>Τρέχον Tile:</strong> {selectedTileIndex} | <strong>Viewing Rotation:</strong> {selectedRotation}° |
+                        <strong> Source:</strong> {currentTileData.sourceIndex} |
+                        <strong> Dest:</strong> {currentTileData.destPosition} |
+                        <strong> Shuffle Rotation:</strong> {currentTileData.shuffleRotation}°
                     </p>
                 </div>
             </div>

@@ -15,6 +15,9 @@ from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.models import Model
 
+from PIL import Image # gia debug
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -514,11 +517,10 @@ async def calculate_histograms(
     """
     Endpoint που:
     1. Δέχεται εικόνα + metadata
-    2. Εξάγει tiles με rotations
-    3. Εξάγει border strips
+    2. Για κάθε tile, υπολογίζει features για ΟΛΕΣ τις πιθανές rotations (0°, 90°, 180°, 270°)
+    3. Εξάγει border strips για κάθε rotation
     4. Αποθηκεύει τα border strips ως εικόνες στο tempPhotos
-    5. Υπολογίζει color histograms για κάθε tile και κάθε border (με configurable bins)
-    6. Εφαρμόζει Gabor filters για texture & edge detection
+    5. Υπολογίζει color histograms, Gabor features και CNN features για κάθε border
     """
     # Διάβασμα εικόνας
     contents = await image.read()
@@ -547,86 +549,98 @@ async def calculate_histograms(
     gabor_dir = temp_photos_dir / "gabor_filters"
     gabor_dir.mkdir(exist_ok=True)
 
-    # Για κάθε tile
+    # Για κάθε tile (sourceIndex), υπολογίζουμε features για όλες τις rotations
     for idx, tile_meta in enumerate(tiles_data):
         source_index = tile_meta['sourceIndex']
         dest_position = tile_meta['destPosition']
-        rotation = tile_meta['rotation']
+        shuffle_rotation = tile_meta['rotation']  # Η rotation από το shuffle (για reference)
 
-        # Εξαγωγή και rotation του tile
-        tile = extract_tile_with_rotation(img, source_index, rotation, gridSize)
+        # Dictionary για να αποθηκεύσουμε features για κάθε rotation
+        rotation_features = {}
 
-        # Υπολογισμός histogram για ολόκληρο το tile
-        tile_histogram = calculate_color_histogram(tile, bins=bins)
+        # Υπολογισμός features για όλες τις πιθανές rotations
+        for rotation_angle in [0, 90, 180, 270]:
+            # Εξαγωγή tile με αυτή τη rotation
+            tile = extract_tile_with_rotation(img, source_index, rotation_angle, gridSize)
 
-        # Εφαρμογή Gabor filters στο tile
-        tile_gabor = apply_gabor_filters(tile, num_orientations=4, num_frequencies=3)
+            # Υπολογισμός histogram για ολόκληρο το tile
+            tile_histogram = calculate_color_histogram(tile, bins=bins)
 
-        # Εξαγωγή CNN features από το tile
-        tile_cnn = extract_cnn_features(tile)
+            # Εφαρμογή Gabor filters στο tile
+            tile_gabor = apply_gabor_filters(tile, num_orientations=4, num_frequencies=3)
 
-        # Αποθήκευση Gabor filtered images για το tile
-        for filter_idx, gabor_response in enumerate(tile_gabor['responses']):
-            # Normalize στο [0, 255] για αποθήκευση
-            gabor_normalized = cv2.normalize(gabor_response, None, 0, 255, cv2.NORM_MINMAX)
-            gabor_uint8 = gabor_normalized.astype(np.uint8)
+            # Εξαγωγή CNN features από το tile
+            tile_cnn = extract_cnn_features(tile)
 
-            # Αποθήκευση
-            gabor_filename = f"tile_{idx}_gabor_{filter_idx}.jpg"
-            gabor_filepath = gabor_dir / gabor_filename
-            cv2.imwrite(str(gabor_filepath), gabor_uint8)
-
-        # Εξαγωγή border strips
-        borders = extract_border_strips(tile, borderWidth)
-
-        # Υπολογισμός histogram, Gabor και CNN features για κάθε border
-        border_histograms = {}
-        border_gabor_features = {}
-        border_cnn_features = {}
-
-        # Αποθήκευση κάθε border strip ως εικόνα
-        for border_name, border_img in borders.items():
-            # Υπολογισμός histogram για το border
-            border_histograms[border_name] = calculate_color_histogram(border_img, bins=bins)
-
-            # Εφαρμογή Gabor filters στο border
-            border_gabor = apply_gabor_filters(border_img, num_orientations=4, num_frequencies=3)
-            border_gabor_features[border_name] = border_gabor['features']
-
-            # Εξαγωγή CNN features από το border
-            border_cnn = extract_cnn_features(border_img)
-            border_cnn_features[border_name] = border_cnn['layers']
-
-            # Αποθήκευση Gabor filtered images για το border
-            for filter_idx, gabor_response in enumerate(border_gabor['responses']):
-                # Normalize στο [0, 255]
+            # Αποθήκευση Gabor filtered images για το tile
+            for filter_idx, gabor_response in enumerate(tile_gabor['responses']):
+                # Normalize στο [0, 255] για αποθήκευση
                 gabor_normalized = cv2.normalize(gabor_response, None, 0, 255, cv2.NORM_MINMAX)
                 gabor_uint8 = gabor_normalized.astype(np.uint8)
 
                 # Αποθήκευση
-                gabor_filename = f"tile_{idx}_{border_name}_gabor_{filter_idx}.jpg"
+                gabor_filename = f"tile_{idx}_rot{rotation_angle}_gabor_{filter_idx}.jpg"
                 gabor_filepath = gabor_dir / gabor_filename
                 cv2.imwrite(str(gabor_filepath), gabor_uint8)
 
-            # Όνομα αρχείου: tile_0_top.jpg, tile_0_right.jpg, κλπ.
-            filename = f"tile_{idx}_src{source_index}_dest{dest_position}_rot{rotation}_{border_name}.jpg"
-            filepath = temp_photos_dir / filename
+            # Εξαγωγή border strips
+            borders = extract_border_strips(tile, borderWidth)
 
-            # Αποθήκευση εικόνας (ήδη σε BGR format)
-            cv2.imwrite(str(filepath), border_img)
+            # Υπολογισμός histogram, Gabor και CNN features για κάθε border
+            border_histograms = {}
+            border_gabor_features = {}
+            border_cnn_features = {}
 
-            saved_images.append(filename)
+            # Αποθήκευση κάθε border strip ως εικόνα
+            for border_name, border_img in borders.items():
+                # Υπολογισμός histogram για το border
+                border_histograms[border_name] = calculate_color_histogram(border_img, bins=bins)
 
+                # Εφαρμογή Gabor filters στο border
+                border_gabor = apply_gabor_filters(border_img, num_orientations=4, num_frequencies=3)
+                border_gabor_features[border_name] = border_gabor['features']
+
+                # Εξαγωγή CNN features από το border
+                border_cnn = extract_cnn_features(border_img)
+                border_cnn_features[border_name] = border_cnn['layers']
+
+                # Αποθήκευση Gabor filtered images για το border
+                for filter_idx, gabor_response in enumerate(border_gabor['responses']):
+                    # Normalize στο [0, 255]
+                    gabor_normalized = cv2.normalize(gabor_response, None, 0, 255, cv2.NORM_MINMAX)
+                    gabor_uint8 = gabor_normalized.astype(np.uint8)
+
+                    # Αποθήκευση
+                    gabor_filename = f"tile_{idx}_rot{rotation_angle}_{border_name}_gabor_{filter_idx}.jpg"
+                    gabor_filepath = gabor_dir / gabor_filename
+                    cv2.imwrite(str(gabor_filepath), gabor_uint8)
+
+                # Όνομα αρχείου: tile_0_rot90_top.jpg, κλπ.
+                filename = f"tile_{idx}_src{source_index}_rot{rotation_angle}_{border_name}.jpg"
+                filepath = temp_photos_dir / filename
+
+                # Αποθήκευση εικόνας (ήδη σε BGR format)
+                cv2.imwrite(str(filepath), border_img)
+
+                saved_images.append(filename)
+
+            # Αποθήκευση features για αυτή τη rotation
+            # Use string keys for JSON compatibility
+            rotation_features[str(rotation_angle)] = {
+                'tileHistogram': tile_histogram,
+                'borderHistograms': border_histograms,
+                'tileGaborFeatures': tile_gabor['features'],
+                'borderGaborFeatures': border_gabor_features,
+                'tileCnnFeatures': tile_cnn['layers'],
+                'borderCnnFeatures': border_cnn_features
+            }
+
+        # Αποθήκευση αποτελεσμάτων με rotation-invariant features
         results.append({
             'sourceIndex': source_index,
             'destPosition': dest_position,
-            'rotation': rotation,
-            'tileHistogram': tile_histogram,
-            'borderHistograms': border_histograms,
-            'tileGaborFeatures': tile_gabor['features'],
-            'borderGaborFeatures': border_gabor_features,
-            'tileCnnFeatures': tile_cnn['layers'],
-            'borderCnnFeatures': border_cnn_features
+            'shuffleRotation': shuffle_rotation,  # Η αρχική rotation από το shuffle
+            'rotationFeatures': rotation_features  # Features για όλες τις rotations
         })
 
     return {
@@ -635,8 +649,9 @@ async def calculate_histograms(
         'borderWidth': borderWidth,
         'bins': bins,
         'totalTiles': len(tiles_data),
+        'totalRotations': 4,  # Για κάθε tile υπολογίζουμε 4 rotations
         'totalImages': len(saved_images),
-        'message': f'Saved {len(saved_images)} border strip images to tempPhotos/',
+        'message': f'Calculated rotation-invariant features for {len(tiles_data)} tiles (4 rotations each). Saved {len(saved_images)} border strip images to tempPhotos/',
         'outputPath': str(temp_photos_dir),
         'results': results
     }
@@ -699,63 +714,85 @@ async def calculate_adjacency_matrix(data: dict):
     tiles = histogram_data['results']
     grid_size = histogram_data['gridSize']
 
-    print(f"Calculating adjacency matrix for {len(tiles)} tiles...")
+    # Check if data has new rotation-aware structure
+    if len(tiles) > 0:
+        first_tile = tiles[0]
+        if 'rotationFeatures' not in first_tile:
+            return {
+                "status": "error",
+                "message": "Histogram data has old structure. Please recalculate histograms with 'Send to Backend' button first!"
+            }
+
+    print(f"Calculating adjacency matrix for {len(tiles)} tiles with rotation-aware features...")
     print(f"Weights: {weights}, CNN Layer: {cnn_layer}, TopK: {top_k}")
 
     # Store all compatibility scores
     all_matches = []
 
-    # For each pair of tiles
+    # Opposite borders (για rotation=0 case - τα borders που πρέπει να ταιριάζουν)
+    opposite_borders = {
+        'top': 'bottom',
+        'right': 'left',
+        'bottom': 'top',
+        'left': 'right'
+    }
+
+    # Για κάθε tile A
     for i, tileA in enumerate(tiles):
-        # For each border of tileA
-        for borderA in ['top', 'right', 'bottom', 'left']:
-            borderA_data = {
-                'histogram': tileA['borderHistograms'][borderA],
-                'gabor': tileA['borderGaborFeatures'][borderA],
-                'cnn': tileA['borderCnnFeatures'][borderA]
-            }
+        # Για κάθε rotation του A (use string keys)
+        for rotA in ['0', '90', '180', '270']:
+            # Για κάθε border του A
+            for borderA in ['top', 'right', 'bottom', 'left']:
+                # Παίρνουμε τα features του A με rotation rotA
+                borderA_data = {
+                    'histogram': tileA['rotationFeatures'][rotA]['borderHistograms'][borderA],
+                    'gabor': tileA['rotationFeatures'][rotA]['borderGaborFeatures'][borderA],
+                    'cnn': tileA['rotationFeatures'][rotA]['borderCnnFeatures'][borderA]
+                }
 
-            # Compare with every other tile
-            for j, tileB in enumerate(tiles):
-                if i == j:
-                    continue  # Don't compare tile with itself
+                # Συγκρίνουμε με κάθε άλλο tile B
+                for j, tileB in enumerate(tiles):
+                    if i == j:
+                        continue  # Don't compare tile with itself
 
-                # Try all 4 rotations
-                for rotation in [0, 90, 180, 270]:
-                    # Get which border of B should match with borderA at this rotation
-                    borderB = get_opposite_border(borderA, rotation)
+                    # Για κάθε rotation του B (use string keys)
+                    for rotB in ['0', '90', '180', '270']:
+                        # Το opposite border που πρέπει να ταιριάξει
+                        borderB = opposite_borders[borderA]
 
-                    borderB_data = {
-                        'histogram': tileB['borderHistograms'][borderB],
-                        'gabor': tileB['borderGaborFeatures'][borderB],
-                        'cnn': tileB['borderCnnFeatures'][borderB]
-                    }
-
-                    # Calculate compatibility
-                    scores = get_border_compatibility(
-                        borderA_data,
-                        borderB_data,
-                        weights,
-                        cnn_layer
-                    )
-
-                    match_entry = {
-                        'tileA': i,
-                        'borderA': borderA,
-                        'tileB': j,
-                        'borderB': borderB,
-                        'rotation': rotation,
-                        'compatibilityScore': float(scores['combined']),
-                        'scores': {
-                            'color': float(scores['color']),
-                            'gabor': float(scores['gabor']),
-                            'cnn': float(scores['cnn'])
+                        # Παίρνουμε τα features του B με rotation rotB
+                        borderB_data = {
+                            'histogram': tileB['rotationFeatures'][rotB]['borderHistograms'][borderB],
+                            'gabor': tileB['rotationFeatures'][rotB]['borderGaborFeatures'][borderB],
+                            'cnn': tileB['rotationFeatures'][rotB]['borderCnnFeatures'][borderB]
                         }
-                    }
 
-                    all_matches.append(match_entry)
+                        # Calculate compatibility
+                        scores = get_border_compatibility(
+                            borderA_data,
+                            borderB_data,
+                            weights,
+                            cnn_layer
+                        )
 
-    print(f"Total comparisons: {len(all_matches)}")
+                        match_entry = {
+                            'tileA': i,
+                            'rotationA': int(rotA),  # Convert string to int for frontend
+                            'borderA': borderA,
+                            'tileB': j,
+                            'rotationB': int(rotB),  # Convert string to int for frontend
+                            'borderB': borderB,
+                            'compatibilityScore': float(scores['combined']),
+                            'scores': {
+                                'color': float(scores['color']),
+                                'gabor': float(scores['gabor']),
+                                'cnn': float(scores['cnn'])
+                            }
+                        }
+
+                        all_matches.append(match_entry)
+
+    print(f"Total comparisons: {len(all_matches)} (with rotation-aware features)")
 
     # Sort by compatibility score (descending)
     all_matches.sort(key=lambda x: x['compatibilityScore'], reverse=True)
@@ -764,21 +801,22 @@ async def calculate_adjacency_matrix(data: dict):
     scores_list = [m['compatibilityScore'] for m in all_matches]
     best_match = all_matches[0] if all_matches else None
 
-    # For each tile-border pair, keep only top K matches
+    # For each tile-rotation-border combination, keep only top K matches
     filtered_matches = []
-    tile_border_counts = {}
+    tile_rotation_border_counts = {}
 
     for match in all_matches:
-        pair_key = (match['tileA'], match['borderA'])
+        # Key: (tileA, rotationA, borderA)
+        trio_key = (match['tileA'], match['rotationA'], match['borderA'])
 
-        if pair_key not in tile_border_counts:
-            tile_border_counts[pair_key] = 0
+        if trio_key not in tile_rotation_border_counts:
+            tile_rotation_border_counts[trio_key] = 0
 
-        if tile_border_counts[pair_key] < top_k:
+        if tile_rotation_border_counts[trio_key] < top_k:
             filtered_matches.append(match)
-            tile_border_counts[pair_key] += 1
+            tile_rotation_border_counts[trio_key] += 1
 
-    print(f"Filtered to {len(filtered_matches)} top matches (topK={top_k})")
+    print(f"Filtered to {len(filtered_matches)} top matches (topK={top_k} per tile-rotation-border)")
 
     return {
         'status': 'success',

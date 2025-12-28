@@ -12,7 +12,7 @@ export const AppContext = createContext()
 
 export default function App() {
   const [message, setMessage] = useState('')
-  const [file, setFile] = useState("/test3.jpg")
+  const [file, setFile] = useState("/test2.jpg")
   const [shuffleData, setShuffleData] = useState(null)
   const [histogramData, setHistogramData] = useState(null)
   const [adjacencyData, setAdjacencyData] = useState(null)

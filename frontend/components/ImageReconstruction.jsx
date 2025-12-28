@@ -2,7 +2,7 @@ import { useContext, useRef, useState, useEffect } from "react"
 import { AppContext } from "../src/App"
 
 export default function ImageReconstruction() {
-    const { file, shuffleData, adjacencyData } = useContext(AppContext)
+    const { file, shuffleData, adjacencyData, histogramData } = useContext(AppContext)
 
     const greedyCanvasRef = useRef(null)
     const annealingCanvasRef = useRef(null)
@@ -65,7 +65,9 @@ export default function ImageReconstruction() {
                         neighbors.push({
                             tile: grid[row - 1][col].tileIndex,
                             border: 'bottom',
-                            myBorder: 'top'
+                            myBorder: 'top',
+                            row: row - 1,
+                            col: col
                         })
                     }
 
@@ -74,7 +76,9 @@ export default function ImageReconstruction() {
                         neighbors.push({
                             tile: grid[row][col - 1].tileIndex,
                             border: 'right',
-                            myBorder: 'left'
+                            myBorder: 'left',
+                            row: row,
+                            col: col - 1
                         })
                     }
 
@@ -83,7 +87,9 @@ export default function ImageReconstruction() {
                         neighbors.push({
                             tile: grid[row][col + 1].tileIndex,
                             border: 'left',
-                            myBorder: 'right'
+                            myBorder: 'right',
+                            row: row,
+                            col: col + 1
                         })
                     }
 
@@ -92,50 +98,53 @@ export default function ImageReconstruction() {
                         neighbors.push({
                             tile: grid[row + 1][col].tileIndex,
                             border: 'top',
-                            myBorder: 'bottom'
+                            myBorder: 'bottom',
+                            row: row + 1,
+                            col: col
                         })
                     }
 
                     if (neighbors.length === 0) continue
 
-                    // For each unused tile, calculate average compatibility with neighbors
+                    // For each unused tile, try all rotations and find the best
                     for (let candidateTile = 0; candidateTile < totalTiles; candidateTile++) {
                         if (usedTiles.has(candidateTile)) continue
 
-                        let totalScore = 0
-                        let matchCount = 0
+                        // Try all possible rotations (absolute rotations)
+                        for (let candidateRotation of [0, 90, 180, 270]) {
+                            let totalScore = 0
+                            let matchCount = 0
 
-                        neighbors.forEach(neighbor => {
-                            // Find best match for this neighbor
-                            const matches = adjacencyMatrix.filter(m =>
-                                m.tileA === neighbor.tile &&
-                                m.borderA === neighbor.border &&
-                                m.tileB === candidateTile
-                            )
+                            neighbors.forEach(neighbor => {
+                                const neighborTile = grid[neighbor.row][neighbor.col]
+                                const neighborRotation = neighborTile.rotation
 
-                            if (matches.length > 0) {
-                                const bestNeighborMatch = matches.reduce((best, current) =>
-                                    current.compatibilityScore > best.compatibilityScore ? current : best
+                                // Find matches where:
+                                // - neighbor tile με τη δική του rotation
+                                // - candidate tile με την candidateRotation
+                                const matches = adjacencyMatrix.filter(m =>
+                                    m.tileA === neighbor.tile &&
+                                    m.rotationA === neighborRotation &&
+                                    m.borderA === neighbor.border &&
+                                    m.tileB === candidateTile &&
+                                    m.rotationB === candidateRotation
                                 )
-                                totalScore += bestNeighborMatch.compatibilityScore
-                                matchCount++
+
+                                if (matches.length > 0) {
+                                    const bestNeighborMatch = matches.reduce((best, current) =>
+                                        current.compatibilityScore > best.compatibilityScore ? current : best
+                                    )
+                                    totalScore += bestNeighborMatch.compatibilityScore
+                                    matchCount++
+                                }
+                            })
+
+                            const avgScore = matchCount > 0 ? totalScore / matchCount : 0
+
+                            if (avgScore > bestScore) {
+                                bestScore = avgScore
+                                bestMatch = { tileIndex: candidateTile, rotation: candidateRotation }
                             }
-                        })
-
-                        const avgScore = matchCount > 0 ? totalScore / matchCount : 0
-
-                        if (avgScore > bestScore) {
-                            bestScore = avgScore
-                            // Find rotation for best match
-                            const firstNeighbor = neighbors[0]
-                            const matches = adjacencyMatrix.filter(m =>
-                                m.tileA === firstNeighbor.tile &&
-                                m.borderA === firstNeighbor.border &&
-                                m.tileB === candidateTile
-                            )
-                            const rotation = matches.length > 0 ? matches[0].rotation : 0
-
-                            bestMatch = { tileIndex: candidateTile, rotation }
                         }
                     }
 
@@ -171,18 +180,23 @@ export default function ImageReconstruction() {
                     if (col < gridSize - 1 && grid[row][col + 1]) {
                         const rightCell = grid[row][col + 1]
 
-                        // Find compatibility score
-                        const match = adjacencyMatrix.find(m =>
+                        // Find match με συγκεκριμένες rotations για τα δύο tiles
+                        const matches = adjacencyMatrix.filter(m =>
                             m.tileA === cell.tileIndex &&
+                            m.rotationA === cell.rotation &&
                             m.borderA === 'right' &&
                             m.tileB === rightCell.tileIndex &&
-                            m.borderB === 'left' &&
-                            m.rotation === rightCell.rotation
+                            m.rotationB === rightCell.rotation
                         )
 
-                        if (match) {
+                        if (matches.length > 0) {
+                            // Παίρνουμε το καλύτερο match (θα πρέπει να υπάρχει μόνο ένα)
+                            const bestMatch = matches.reduce((best, current) =>
+                                current.compatibilityScore > best.compatibilityScore ? current : best
+                            )
+
                             // Lower energy = better match (invert compatibility score)
-                            totalEnergy -= match.compatibilityScore
+                            totalEnergy -= bestMatch.compatibilityScore
                             validPairs++
                         } else {
                             totalEnergy += 1 // Penalty for no match
@@ -193,16 +207,21 @@ export default function ImageReconstruction() {
                     if (row < gridSize - 1 && grid[row + 1][col]) {
                         const bottomCell = grid[row + 1][col]
 
-                        const match = adjacencyMatrix.find(m =>
+                        // Find match με συγκεκριμένες rotations για τα δύο tiles
+                        const matches = adjacencyMatrix.filter(m =>
                             m.tileA === cell.tileIndex &&
+                            m.rotationA === cell.rotation &&
                             m.borderA === 'bottom' &&
                             m.tileB === bottomCell.tileIndex &&
-                            m.borderB === 'top' &&
-                            m.rotation === bottomCell.rotation
+                            m.rotationB === bottomCell.rotation
                         )
 
-                        if (match) {
-                            totalEnergy -= match.compatibilityScore
+                        if (matches.length > 0) {
+                            const bestMatch = matches.reduce((best, current) =>
+                                current.compatibilityScore > best.compatibilityScore ? current : best
+                            )
+
+                            totalEnergy -= bestMatch.compatibilityScore
                             validPairs++
                         } else {
                             totalEnergy += 1
@@ -320,7 +339,7 @@ export default function ImageReconstruction() {
 
     // Calculate accuracy
     const calculateAccuracy = (grid) => {
-        if (!grid || !shuffleData) return null
+        if (!grid || !shuffleData || !histogramData) return null
 
         const gridSize = shuffleData.gridSize
         let correctPositions = 0
@@ -332,11 +351,12 @@ export default function ImageReconstruction() {
                 if (grid[row][col]) {
                     const predicted = grid[row][col]
 
-                    // Convert solver's tile index (which is destPosition in shuffled grid)
-                    // to source index (original position)
-                    const predictedSourceIndex = shuffleData.tiles.find(
-                        t => t.destPosition === predicted.tileIndex
-                    )?.sourceIndex
+                    // predicted.tileIndex is the index in histogramData.results array
+                    const tileData = histogramData.results[predicted.tileIndex]
+                    if (!tileData) continue
+
+                    // Get the source index (original position of this tile in the original image)
+                    const predictedSourceIndex = tileData.sourceIndex
 
                     // This position should have this source index to be correct
                     const correctSourceIndex = row * gridSize + col
@@ -344,9 +364,10 @@ export default function ImageReconstruction() {
                     if (predictedSourceIndex === correctSourceIndex) {
                         correctPositions++
 
-                        // Check rotation too
-                        const correctRotation = 0 // Original tiles have 0° rotation
-                        if (predicted.rotation === correctRotation) {
+                        // Check rotation
+                        // Η σωστή rotation είναι 0 (αρχική εικόνα χωρίς rotation)
+                        // predicted.rotation είναι absolute rotation από τον solver
+                        if (predicted.rotation === 0) {
                             correctRotations++
                         }
                     }
@@ -396,15 +417,13 @@ export default function ImageReconstruction() {
                     continue
                 }
 
-                // Get the shuffled tile info
-                const shuffledTileInfo = shuffleData.tiles.find(
-                    t => t.destPosition === cell.tileIndex
-                )
-
-                if (!shuffledTileInfo) continue
+                // Get tile data from histogramData.results
+                // cell.tileIndex is the index in the results array
+                const tileData = histogramData.results[cell.tileIndex]
+                if (!tileData) continue
 
                 // Source position (original tile position in the original image)
-                const sourceIndex = shuffledTileInfo.sourceIndex
+                const sourceIndex = tileData.sourceIndex
                 const sourceRow = Math.floor(sourceIndex / gridSize)
                 const sourceCol = sourceIndex % gridSize
 
@@ -417,13 +436,12 @@ export default function ImageReconstruction() {
                 // Move to center of destination tile
                 ctx.translate(destX + tileWidth / 2, destY + tileHeight / 2)
 
-                // Apply rotation from reconstruction (UNDO the shuffle rotation, then apply reconstruction rotation)
-                // Total rotation = reconstruction rotation - shuffle rotation
-                const totalRotation = (cell.rotation - shuffledTileInfo.rotation + 360) % 360
-                const rotationRadians = (totalRotation * Math.PI) / 180
+                // Apply rotation from reconstruction
+                // cell.rotation είναι absolute rotation από τον solver
+                const rotationRadians = (cell.rotation * Math.PI) / 180
                 ctx.rotate(rotationRadians)
 
-                // Draw the source tile
+                // Draw the source tile (χωρίς shuffle rotation - η εικόνα είναι η αρχική)
                 ctx.drawImage(
                     img,
                     sourceCol * tileWidth, sourceRow * tileHeight, tileWidth, tileHeight,
@@ -431,15 +449,6 @@ export default function ImageReconstruction() {
                 )
 
                 ctx.restore()
-
-                // Draw border to show correctness
-                const predictedSourceIndex = sourceIndex
-                const correctSourceIndex = row * gridSize + col
-                const isCorrect = predictedSourceIndex === correctSourceIndex
-
-                ctx.strokeStyle = isCorrect ? '#4CAF50' : '#F44336'
-                ctx.lineWidth = 3
-                ctx.strokeRect(destX, destY, tileWidth, tileHeight)
             }
         }
     }
@@ -797,13 +806,9 @@ export default function ImageReconstruction() {
                                 style={{
                                     maxWidth: '300px',
                                     height: 'auto',
-                                    border: '3px solid #2196F3',
                                     borderRadius: '5px'
                                 }}
                             />
-                            <p style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-                                Green = σωστή θέση, Red = λάθος
-                            </p>
                             {greedyAccuracy && (
                                 <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#2196F3' }}>
                                     {greedyAccuracy.positionAccuracy}% position accuracy
@@ -821,13 +826,9 @@ export default function ImageReconstruction() {
                                 style={{
                                     maxWidth: '300px',
                                     height: 'auto',
-                                    border: '3px solid #FF5722',
                                     borderRadius: '5px'
                                 }}
                             />
-                            <p style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-                                Green = σωστή θέση, Red = λάθος
-                            </p>
                             {annealingAccuracy && (
                                 <p style={{ fontSize: '12px', fontWeight: 'bold', color: '#FF5722' }}>
                                     {annealingAccuracy.positionAccuracy}% position accuracy
